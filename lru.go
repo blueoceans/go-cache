@@ -122,23 +122,13 @@ func RegisterNewGroupHook(fn func(*Group)) {
 type Group struct {
 	name       string
 	getter     Getter
-	cacheBytes int64 // limit for sum of mainCache and hotCache size
+	cacheBytes int64 // limit for sum of mainCache
 
 	// mainCache is a cache of the keys for which this process
 	// (amongst its peers) is authorative. That is, this cache
 	// contains keys which consistent hash on to this process's
 	// peer number.
 	mainCache cache
-
-	// hotCache contains keys/values for which this peer is not
-	// authorative (otherwise they would be in mainCache), but
-	// are popular enough to warrant mirroring in this process to
-	// avoid going over the network to fetch from a peer.  Having
-	// a hotCache avoids network hotspotting, where a peer's
-	// network card could become the bottleneck on a popular key.
-	// This cache is used sparingly to maximize the total number
-	// of key/value pairs that can be stored globally.
-	hotCache cache
 
 	// loadGroup ensures that each key is only fetched once
 	// (either locally or remotely), regardless of the number of
@@ -227,10 +217,6 @@ func (g *Group) lookupCache(key string) (value ByteView, ok bool) {
 		return
 	}
 	value, ok = g.mainCache.get(key)
-	if ok {
-		return
-	}
-	value, ok = g.hotCache.get(key)
 	return
 }
 
@@ -243,8 +229,7 @@ func (g *Group) populateCache(key string, value ByteView, cache *cache) {
 	// Evict items from cache(s) if necessary.
 	for {
 		mainBytes := g.mainCache.bytes()
-		hotBytes := g.hotCache.bytes()
-		if mainBytes+hotBytes <= g.cacheBytes {
+		if mainBytes <= g.cacheBytes {
 			return
 		}
 
@@ -252,9 +237,6 @@ func (g *Group) populateCache(key string, value ByteView, cache *cache) {
 		// It should be something based on measurements and/or
 		// respecting the costs of different resources.
 		victim := &g.mainCache
-		if hotBytes > mainBytes/8 {
-			victim = &g.hotCache
-		}
 		victim.removeOldest()
 	}
 }
@@ -266,11 +248,6 @@ const (
 	// The MainCache is the cache for items that this peer is the
 	// owner for.
 	MainCache CacheType = iota + 1
-
-	// The HotCache is the cache for items that seem popular
-	// enough to replicate to this node, even though it's not the
-	// owner.
-	HotCache
 )
 
 // CacheStats returns stats about the provided cache within the group.
@@ -278,8 +255,6 @@ func (g *Group) CacheStats(which CacheType) CacheStats {
 	switch which {
 	case MainCache:
 		return g.mainCache.stats()
-	case HotCache:
-		return g.hotCache.stats()
 	default:
 		return CacheStats{}
 	}
