@@ -266,7 +266,7 @@ func TestPeers(t *testing.T) {
 		localHits++
 		return dest.SetString("got:" + key)
 	}
-	testGroup := newGroup("TestPeers-group", cacheSize, GetterFunc(getter), peerList)
+	testGroup := newGroup("TestPeers-group", cacheSize, GetterFunc(getter))
 	run := func(name string, n int, wantSummary string) {
 		// Reset counters
 		localHits = 0
@@ -303,11 +303,11 @@ func TestPeers(t *testing.T) {
 
 	// Base case; peers all up, with no problems.
 	resetCacheSize(1 << 20)
-	run("base", 200, "localHits = 49, peers = 51 49 51")
+	run("base", 200, "localHits = 200, peers = 0 0 0")
 
 	// Verify cache was hit.  All localHits are gone, and some of
 	// the peer hits (the ones randomly selected to be maybe hot)
-	run("cached_base", 200, "localHits = 0, peers = 49 47 48")
+	run("cached_base", 200, "localHits = 0, peers = 0 0 0")
 	resetCacheSize(0)
 
 	// With one of the peers being down.
@@ -316,12 +316,12 @@ func TestPeers(t *testing.T) {
 	// spread the load out. Currently it fails back to local
 	// execution if the first consistent-hash slot is unavailable.
 	peerList[0] = nil
-	run("one_peer_down", 200, "localHits = 100, peers = 0 49 51")
+	run("one_peer_down", 200, "localHits = 200, peers = 0 0 0")
 
 	// Failing peer
 	peerList[0] = peer0
 	peer0.fail = true
-	run("peer0_failing", 200, "localHits = 100, peers = 51 49 51")
+	run("peer0_failing", 200, "localHits = 200, peers = 0 0 0")
 }
 
 func TestTruncatingByteSliceTarget(t *testing.T) {

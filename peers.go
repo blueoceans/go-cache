@@ -36,40 +36,5 @@ type ProtoGetter interface {
 	Get(context Context, in *pb.GetRequest, out *pb.GetResponse) error
 }
 
-// PeerPicker is the interface that must be implemented to locate
-// the peer that owns a specific key.
-type PeerPicker interface {
-	// PickPeer returns the peer that owns the specific key
-	// and true to indicate that a remote peer was nominated.
-	// It returns nil, false if the key owner is the current peer.
-	PickPeer(key string) (peer ProtoGetter, ok bool)
-}
-
 // NoPeers is an implementation of PeerPicker that never finds a peer.
 type NoPeers struct{}
-
-func (NoPeers) PickPeer(key string) (peer ProtoGetter, ok bool) { return }
-
-var (
-	portPicker func() PeerPicker
-)
-
-// RegisterPeerPicker registers the peer initialization function.
-// It is called once, when the first group is created.
-func RegisterPeerPicker(fn func() PeerPicker) {
-	if portPicker != nil {
-		panic("RegisterPeerPicker called more than once")
-	}
-	portPicker = fn
-}
-
-func getPeers() PeerPicker {
-	if portPicker == nil {
-		return NoPeers{}
-	}
-	pk := portPicker()
-	if pk == nil {
-		pk = NoPeers{}
-	}
-	return pk
-}
