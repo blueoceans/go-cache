@@ -35,6 +35,3 @@ type Context interface{}
 type ProtoGetter interface {
 	Get(context Context, in *pb.GetRequest, out *pb.GetResponse) error
 }
-
-// NoPeers is an implementation of PeerPicker that never finds a peer.
-type NoPeers struct{}
