@@ -60,8 +60,7 @@ var (
 	mu     sync.RWMutex
 	groups = make(map[string]*Group)
 
-	initPeerServerOnce sync.Once
-	initPeerServer     func()
+	initPeerServer func()
 )
 
 // GetGroup returns the named group previously created with NewGroup, or
@@ -93,7 +92,6 @@ func newGroup(name string, cacheBytes int64, getter Getter) *Group {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	initPeerServerOnce.Do(callInitPeerServer)
 	if _, dup := groups[name]; dup {
 		panic("duplicate registration of group " + name)
 	}
