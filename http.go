@@ -26,17 +26,6 @@ import (
 	"sync"
 )
 
-// HTTPPoolOptions are the configurations of a HTTPPool.
-type HTTPPoolOptions struct {
-	// BasePath specifies the HTTP path that will serve groupcache requests.
-	// If blank, it defaults to "/_groupcache/".
-	BasePath string
-
-	// Replicas specifies the number of key replicas on the consistent hash.
-	// If blank, it defaults to 50.
-	Replicas int
-}
-
 var httpPoolMade bool
 
 type httpGetter struct {
