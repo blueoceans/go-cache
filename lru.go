@@ -122,7 +122,6 @@ func RegisterNewGroupHook(fn func(*Group)) {
 type Group struct {
 	name       string
 	getter     Getter
-	peersOnce  sync.Once
 	cacheBytes int64 // limit for sum of mainCache and hotCache size
 
 	// mainCache is a cache of the keys for which this process
