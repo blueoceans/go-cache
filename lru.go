@@ -30,12 +30,10 @@ package lru
 
 import (
 	"errors"
-	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
-	pb "github.com/golang/groupcache/groupcachepb"
 	"github.com/golang/groupcache/lru"
 	"github.com/golang/groupcache/singleflight"
 )
@@ -61,9 +59,6 @@ func (f GetterFunc) Get(ctx Context, key string, dest Sink) error {
 var (
 	mu     sync.RWMutex
 	groups = make(map[string]*Group)
-
-	initPeerServerOnce sync.Once
-	initPeerServer     func()
 )
 
 // GetGroup returns the named group previously created with NewGroup, or
@@ -85,24 +80,22 @@ func GetGroup(name string) *Group {
 //
 // The group name must be unique for each getter.
 func NewGroup(name string, cacheBytes int64, getter Getter) *Group {
-	return newGroup(name, cacheBytes, getter, nil)
+	return newGroup(name, cacheBytes, getter)
 }
 
 // If peers is nil, the peerPicker is called via a sync.Once to initialize it.
-func newGroup(name string, cacheBytes int64, getter Getter, peers PeerPicker) *Group {
+func newGroup(name string, cacheBytes int64, getter Getter) *Group {
 	if getter == nil {
 		panic("nil Getter")
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	initPeerServerOnce.Do(callInitPeerServer)
 	if _, dup := groups[name]; dup {
 		panic("duplicate registration of group " + name)
 	}
 	g := &Group{
 		name:       name,
 		getter:     getter,
-		peers:      peers,
 		cacheBytes: cacheBytes,
 	}
 	if fn := newGroupHook; fn != nil {
@@ -124,28 +117,11 @@ func RegisterNewGroupHook(fn func(*Group)) {
 	newGroupHook = fn
 }
 
-// RegisterServerStart registers a hook that is run when the first
-// group is created.
-func RegisterServerStart(fn func()) {
-	if initPeerServer != nil {
-		panic("RegisterServerStart called more than once")
-	}
-	initPeerServer = fn
-}
-
-func callInitPeerServer() {
-	if initPeerServer != nil {
-		initPeerServer()
-	}
-}
-
 // A Group is a cache namespace and associated data loaded spread over
 // a group of 1 or more machines.
 type Group struct {
 	name       string
 	getter     Getter
-	peersOnce  sync.Once
-	peers      PeerPicker
 	cacheBytes int64 // limit for sum of mainCache and hotCache size
 
 	// mainCache is a cache of the keys for which this process
@@ -177,8 +153,6 @@ type Group struct {
 type Stats struct {
 	Gets           AtomicInt // any Get request, including from peers
 	CacheHits      AtomicInt // either cache was good
-	PeerLoads      AtomicInt // either remote load or remote cache hit (not an error)
-	PeerErrors     AtomicInt
 	Loads          AtomicInt // (gets - cacheHits)
 	LoadsDeduped   AtomicInt // after singleflight
 	LocalLoads     AtomicInt // total good local loads
@@ -191,14 +165,7 @@ func (g *Group) Name() string {
 	return g.name
 }
 
-func (g *Group) initPeers() {
-	if g.peers == nil {
-		g.peers = getPeers()
-	}
-}
-
 func (g *Group) Get(ctx Context, key string, dest Sink) error {
-	g.peersOnce.Do(g.initPeers)
 	g.Stats.Gets.Add(1)
 	if dest == nil {
 		return errors.New("groupcache: nil dest Sink")
@@ -232,18 +199,6 @@ func (g *Group) load(ctx Context, key string, dest Sink) (value ByteView, destPo
 		g.Stats.LoadsDeduped.Add(1)
 		var value ByteView
 		var err error
-		if peer, ok := g.peers.PickPeer(key); ok {
-			value, err = g.getFromPeer(ctx, peer, key)
-			if err == nil {
-				g.Stats.PeerLoads.Add(1)
-				return value, nil
-			}
-			g.Stats.PeerErrors.Add(1)
-			// TODO(bradfitz): log the peer's error? keep
-			// log of the past few for /groupcachez?  It's
-			// probably boring (normal task movement), so not
-			// worth logging I imagine.
-		}
 		value, err = g.getLocally(ctx, key, dest)
 		if err != nil {
 			g.Stats.LocalLoadErrs.Add(1)
@@ -266,26 +221,6 @@ func (g *Group) getLocally(ctx Context, key string, dest Sink) (ByteView, error)
 		return ByteView{}, err
 	}
 	return dest.view()
-}
-
-func (g *Group) getFromPeer(ctx Context, peer ProtoGetter, key string) (ByteView, error) {
-	req := &pb.GetRequest{
-		Group: &g.name,
-		Key:   &key,
-	}
-	res := &pb.GetResponse{}
-	err := peer.Get(ctx, req, res)
-	if err != nil {
-		return ByteView{}, err
-	}
-	value := ByteView{b: res.Value}
-	// TODO(bradfitz): use res.MinuteQps or something smart to
-	// conditionally populate hotCache.  For now just do it some
-	// percentage of the time.
-	if rand.Intn(10) == 0 {
-		g.populateCache(key, value, &g.hotCache)
-	}
-	return value, nil
 }
 
 func (g *Group) lookupCache(key string) (value ByteView, ok bool) {
