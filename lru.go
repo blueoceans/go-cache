@@ -59,8 +59,6 @@ func (f GetterFunc) Get(ctx Context, key string, dest Sink) error {
 var (
 	mu     sync.RWMutex
 	groups = make(map[string]*Group)
-
-	initPeerServer func()
 )
 
 // GetGroup returns the named group previously created with NewGroup, or
@@ -117,21 +115,6 @@ func RegisterNewGroupHook(fn func(*Group)) {
 		panic("RegisterNewGroupHook called more than once")
 	}
 	newGroupHook = fn
-}
-
-// RegisterServerStart registers a hook that is run when the first
-// group is created.
-func RegisterServerStart(fn func()) {
-	if initPeerServer != nil {
-		panic("RegisterServerStart called more than once")
-	}
-	initPeerServer = fn
-}
-
-func callInitPeerServer() {
-	if initPeerServer != nil {
-		initPeerServer()
-	}
 }
 
 // A Group is a cache namespace and associated data loaded spread over
