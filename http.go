@@ -30,28 +30,6 @@ const defaultBasePath = "/_groupcache/"
 
 const defaultReplicas = 50
 
-// HTTPPool implements PeerPicker for a pool of HTTP peers.
-type HTTPPool struct {
-	// Context optionally specifies a context for the server to use when it
-	// receives a request.
-	// If nil, the server uses a nil Context.
-	Context func(*http.Request) Context
-
-	// Transport optionally specifies an http.RoundTripper for the client
-	// to use when it makes a request.
-	// If nil, the client uses http.DefaultTransport.
-	Transport func(Context) http.RoundTripper
-
-	// base path including leading and trailing slash, e.g. "/_groupcache/"
-	basePath string
-
-	// this peer's base URL, e.g. "https://example.net:8000"
-	self string
-
-	mu          sync.Mutex             // guards peers and httpGetters
-	httpGetters map[string]*httpGetter // keyed by e.g. "http://10.0.0.2:8008"
-}
-
 // HTTPPoolOptions are the configurations of a HTTPPool.
 type HTTPPoolOptions struct {
 	// BasePath specifies the HTTP path that will serve groupcache requests.
@@ -64,18 +42,6 @@ type HTTPPoolOptions struct {
 }
 
 var httpPoolMade bool
-
-// Set updates the pool's list of peers.
-// Each peer value should be a valid base URL,
-// for example "http://example.net:8000".
-func (p *HTTPPool) Set(peers ...string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.httpGetters = make(map[string]*httpGetter, len(peers))
-	for _, peer := range peers {
-		p.httpGetters[peer] = &httpGetter{transport: p.Transport, baseURL: peer + p.basePath}
-	}
-}
 
 type httpGetter struct {
 	transport func(Context) http.RoundTripper
