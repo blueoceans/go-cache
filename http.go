@@ -21,18 +21,10 @@ limitations under the License.
 package lru
 
 import (
-	"bytes"
 	"net/http"
-	"sync"
 )
-
-var httpPoolMade bool
 
 type httpGetter struct {
 	transport func(Context) http.RoundTripper
 	baseURL   string
-}
-
-var bufferPool = sync.Pool{
-	New: func() interface{} { return new(bytes.Buffer) },
 }
