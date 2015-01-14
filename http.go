@@ -26,10 +26,6 @@ import (
 	"sync"
 )
 
-const defaultBasePath = "/_groupcache/"
-
-const defaultReplicas = 50
-
 // HTTPPoolOptions are the configurations of a HTTPPool.
 type HTTPPoolOptions struct {
 	// BasePath specifies the HTTP path that will serve groupcache requests.
