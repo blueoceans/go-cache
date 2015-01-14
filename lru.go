@@ -153,8 +153,6 @@ type Group struct {
 type Stats struct {
 	Gets           AtomicInt // any Get request, including from peers
 	CacheHits      AtomicInt // either cache was good
-	PeerLoads      AtomicInt // either remote load or remote cache hit (not an error)
-	PeerErrors     AtomicInt
 	Loads          AtomicInt // (gets - cacheHits)
 	LoadsDeduped   AtomicInt // after singleflight
 	LocalLoads     AtomicInt // total good local loads
