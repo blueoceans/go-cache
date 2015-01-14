@@ -151,13 +151,12 @@ type Group struct {
 
 // Stats are per-group statistics.
 type Stats struct {
-	Gets           AtomicInt // any Get request, including from peers
-	CacheHits      AtomicInt // either cache was good
-	Loads          AtomicInt // (gets - cacheHits)
-	LoadsDeduped   AtomicInt // after singleflight
-	LocalLoads     AtomicInt // total good local loads
-	LocalLoadErrs  AtomicInt // total bad local loads
-	ServerRequests AtomicInt // gets that came over the network from peers
+	Gets          AtomicInt // any Get request, including from peers
+	CacheHits     AtomicInt // either cache was good
+	Loads         AtomicInt // (gets - cacheHits)
+	LoadsDeduped  AtomicInt // after singleflight
+	LocalLoads    AtomicInt // total good local loads
+	LocalLoadErrs AtomicInt // total bad local loads
 }
 
 // Name returns the name of the group.
