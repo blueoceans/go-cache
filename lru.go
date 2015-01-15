@@ -262,6 +262,56 @@ func (g *Group) populateCache(key string, value ByteView, cache *cache) {
 	}
 }
 
+func (g *GroupWithStats) Get(ctx Context, key string, dest Sink) error {
+	g.Stats.Gets.Add(1)
+	if dest == nil {
+		return errors.New("groupcache: nil dest Sink")
+	}
+	value, cacheHit := g.lookupCache(key)
+
+	if cacheHit {
+		g.Stats.CacheHits.Add(1)
+		return setSinkView(dest, value)
+	}
+
+	// Optimization to avoid double unmarshalling or copying: keep
+	// track of whether the dest was already populated. One caller
+	// (if local) will set this; the losers will not. The common
+	// case will likely be one caller.
+	destPopulated := false
+	value, destPopulated, err := g.load(ctx, key, dest)
+	if err != nil {
+		return err
+	}
+	if destPopulated {
+		return nil
+	}
+	return setSinkView(dest, value)
+}
+
+// load loads key either by invoking the getter locally or by sending it to another machine.
+func (g *GroupWithStats) load(ctx Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
+	g.Stats.Loads.Add(1)
+	viewi, err := g.loadGroup.Do(key, func() (interface{}, error) {
+		g.Stats.LoadsDeduped.Add(1)
+		var value ByteView
+		var err error
+		value, err = g.getLocally(ctx, key, dest)
+		if err != nil {
+			g.Stats.LocalLoadErrs.Add(1)
+			return nil, err
+		}
+		g.Stats.LocalLoads.Add(1)
+		destPopulated = true // only one caller of load gets this return value
+		g.populateCache(key, value, &g.mainCache)
+		return value, nil
+	})
+	if err == nil {
+		value = viewi.(ByteView)
+	}
+	return
+}
+
 // CacheType represents a type of cache.
 type CacheType int
 
@@ -272,7 +322,7 @@ const (
 )
 
 // CacheStats returns stats about the provided cache within the group.
-func (g *Group) CacheStats(which CacheType) CacheStats {
+func (g *GroupWithStats) CacheStats(which CacheType) CacheStats {
 	switch which {
 	case MainCache:
 		return g.mainCache.stats()
