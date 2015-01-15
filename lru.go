@@ -176,14 +176,12 @@ func (g *Group) Name() string {
 }
 
 func (g *Group) Get(ctx Context, key string, dest Sink) error {
-	g.Stats.Gets.Add(1)
 	if dest == nil {
 		return errors.New("groupcache: nil dest Sink")
 	}
 	value, cacheHit := g.lookupCache(key)
 
 	if cacheHit {
-		g.Stats.CacheHits.Add(1)
 		return setSinkView(dest, value)
 	}
 
@@ -204,17 +202,13 @@ func (g *Group) Get(ctx Context, key string, dest Sink) error {
 
 // load loads key either by invoking the getter locally or by sending it to another machine.
 func (g *Group) load(ctx Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
-	g.Stats.Loads.Add(1)
 	viewi, err := g.loadGroup.Do(key, func() (interface{}, error) {
-		g.Stats.LoadsDeduped.Add(1)
 		var value ByteView
 		var err error
 		value, err = g.getLocally(ctx, key, dest)
 		if err != nil {
-			g.Stats.LocalLoadErrs.Add(1)
 			return nil, err
 		}
-		g.Stats.LocalLoads.Add(1)
 		destPopulated = true // only one caller of load gets this return value
 		g.populateCache(key, value, &g.mainCache)
 		return value, nil
