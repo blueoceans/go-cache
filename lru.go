@@ -58,12 +58,12 @@ func (f GetterFunc) Get(ctx Context, key string, dest Sink) error {
 
 var (
 	mu     sync.RWMutex
-	groups = make(map[string]*Group)
+	groups = make(map[string]*GroupInterface)
 )
 
 // GetGroup returns the named group previously created with NewGroup, or
 // nil if there's no such group.
-func GetGroup(name string) *Group {
+func GetGroup(name string) *GroupInterface {
 	mu.RLock()
 	g := groups[name]
 	mu.RUnlock()
@@ -79,12 +79,12 @@ func GetGroup(name string) *Group {
 // completes.
 //
 // The group name must be unique for each getter.
-func NewGroup(name string, cacheBytes int64, getter Getter) *Group {
-	return newGroup(name, cacheBytes, getter)
+func NewGroup(name string, cacheBytes int64, getter Getter, stats bool) *GroupInterface {
+	return newGroup(name, cacheBytes, getter, stats)
 }
 
 // If peers is nil, the peerPicker is called via a sync.Once to initialize it.
-func newGroup(name string, cacheBytes int64, getter Getter) *Group {
+func newGroup(name string, cacheBytes int64, getter Getter, stats bool) *GroupInterface {
 	if getter == nil {
 		panic("nil Getter")
 	}
@@ -98,23 +98,40 @@ func newGroup(name string, cacheBytes int64, getter Getter) *Group {
 		getter:     getter,
 		cacheBytes: cacheBytes,
 	}
-	if fn := newGroupHook; fn != nil {
-		fn(g)
+	var gi GroupInterface
+	if stats {
+		gi = &GroupWithStats{
+			Group: g,
+		}
+	} else {
+		gi = g
 	}
-	groups[name] = g
-	return g
+	if fn := newGroupHook; fn != nil {
+		fn(&gi)
+	}
+	groups[name] = &gi
+	return &gi
 }
 
 // newGroupHook, if non-nil, is called right after a new group is created.
-var newGroupHook func(*Group)
+var newGroupHook func(*GroupInterface)
 
 // RegisterNewGroupHook registers a hook that is run each time
 // a group is created.
-func RegisterNewGroupHook(fn func(*Group)) {
+func RegisterNewGroupHook(fn func(*GroupInterface)) {
 	if newGroupHook != nil {
 		panic("RegisterNewGroupHook called more than once")
 	}
 	newGroupHook = fn
+}
+
+type GroupInterface interface {
+	Name() string
+	Get(ctx Context, key string, dest Sink) error
+	load(ctx Context, key string, dest Sink) (value ByteView, destPopulated bool, err error)
+	getLocally(ctx Context, key string, dest Sink) (ByteView, error)
+	lookupCache(key string) (value ByteView, ok bool)
+	populateCache(key string, value ByteView, cache *cache)
 }
 
 // A Group is a cache namespace and associated data loaded spread over
@@ -134,6 +151,10 @@ type Group struct {
 	// (either locally or remotely), regardless of the number of
 	// concurrent callers.
 	loadGroup singleflight.Group
+}
+
+type GroupWithStats struct {
+	*Group
 
 	// Stats are statistics on the group.
 	Stats Stats
