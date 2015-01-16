@@ -58,18 +58,19 @@ const (
 	testMessageType = "google3/net/groupcache/go/test_proto.TestMessage"
 	fromChan        = "from-chan"
 	cacheSize       = 1 << 20
+	stats           = true
 )
 
 func testSetup() {
-	stringGroup = NewGroup(stringGroupName, cacheSize, GetterFunc(func(_ Context, key string, dest Sink) error {
+	stringGroup = (*NewGroup(stringGroupName, cacheSize, GetterFunc(func(_ Context, key string, dest Sink) error {
 		if key == fromChan {
 			key = <-stringc
 		}
 		cacheFills.Add(1)
 		return dest.SetString("ECHO:" + key)
-	}))
+	}), stats))
 
-	protoGroup = NewGroup(protoGroupName, cacheSize, GetterFunc(func(_ Context, key string, dest Sink) error {
+	protoGroup = (*NewGroup(protoGroupName, cacheSize, GetterFunc(func(_ Context, key string, dest Sink) error {
 		if key == fromChan {
 			key = <-stringc
 		}
@@ -78,7 +79,7 @@ func testSetup() {
 			Name: proto.String("ECHO:" + key),
 			City: proto.String("SOME-CITY"),
 		})
-	}))
+	}), stats))
 }
 
 // tests that a Getter's Get method is only called once with two
@@ -204,7 +205,7 @@ func TestCacheEviction(t *testing.T) {
 		t.Fatalf("expected 1 cache fill; got %d", fills)
 	}
 
-	g := stringGroup.(*Group)
+	g := stringGroup.(*GroupWithStats)
 	evict0 := g.mainCache.nevict
 
 	// Trash the cache with other keys.
@@ -266,7 +267,7 @@ func TestPeers(t *testing.T) {
 		localHits++
 		return dest.SetString("got:" + key)
 	}
-	testGroup := newGroup("TestPeers-group", cacheSize, GetterFunc(getter))
+	var testGroup GroupInterface
 	run := func(name string, n int, wantSummary string) {
 		// Reset counters
 		localHits = 0
@@ -295,9 +296,7 @@ func TestPeers(t *testing.T) {
 		}
 	}
 	resetCacheSize := func(maxBytes int64) {
-		g := testGroup
-		g.cacheBytes = maxBytes
-		g.mainCache = cache{}
+		testGroup = (*newGroup(fmt.Sprintf("TestPeers-group-%s", maxBytes), maxBytes, GetterFunc(getter), stats))
 	}
 
 	// Base case; peers all up, with no problems.
