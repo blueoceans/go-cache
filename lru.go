@@ -134,6 +134,14 @@ type GroupInterface interface {
 	populateCache(key string, value ByteView, cache *cache)
 }
 
+// Verify that implements Getter and GroupInterface.
+var (
+	_ Getter         = (*Group)(nil)
+	_ Getter         = (*GroupWithStats)(nil)
+	_ GroupInterface = (*Group)(nil)
+	_ GroupInterface = (*GroupWithStats)(nil)
+)
+
 // A Group is a cache namespace and associated data loaded spread over
 // a group of 1 or more machines.
 type Group struct {
