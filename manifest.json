@@ -1,0 +1,10 @@
+{
+    "dependencies": {
+        "github.com/golang/groupcache": {
+            "branch": "master"
+        },
+        "github.com/golang/protobuf": {
+            "branch": "master"
+        }
+    }
+}

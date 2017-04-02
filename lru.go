@@ -1,5 +1,9 @@
 /*
+Copyright 2015 ENDOH takanao.
+<https://github.com/MiCHiLU/go-lru-cache-stats>
+
 Copyright 2012 Google Inc.
+<https://github.com/golang/groupcache>
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,16 +26,14 @@ limitations under the License.
 // or finally gets the data.  In the common case, many concurrent
 // cache misses across a set of peers for the same key result in just
 // one cache fill.
-package groupcache
+package lru
 
 import (
 	"errors"
-	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
-	pb "github.com/golang/groupcache/groupcachepb"
 	"github.com/golang/groupcache/lru"
 	"github.com/golang/groupcache/singleflight"
 )
@@ -56,15 +58,12 @@ func (f GetterFunc) Get(ctx Context, key string, dest Sink) error {
 
 var (
 	mu     sync.RWMutex
-	groups = make(map[string]*Group)
-
-	initPeerServerOnce sync.Once
-	initPeerServer     func()
+	groups = make(map[string]*GroupInterface)
 )
 
 // GetGroup returns the named group previously created with NewGroup, or
 // nil if there's no such group.
-func GetGroup(name string) *Group {
+func GetGroup(name string) *GroupInterface {
 	mu.RLock()
 	g := groups[name]
 	mu.RUnlock()
@@ -80,69 +79,75 @@ func GetGroup(name string) *Group {
 // completes.
 //
 // The group name must be unique for each getter.
-func NewGroup(name string, cacheBytes int64, getter Getter) *Group {
-	return newGroup(name, cacheBytes, getter, nil)
+func NewGroup(name string, cacheBytes int64, getter Getter, stats bool) *GroupInterface {
+	return newGroup(name, cacheBytes, getter, stats)
 }
 
 // If peers is nil, the peerPicker is called via a sync.Once to initialize it.
-func newGroup(name string, cacheBytes int64, getter Getter, peers PeerPicker) *Group {
+func newGroup(name string, cacheBytes int64, getter Getter, stats bool) *GroupInterface {
 	if getter == nil {
 		panic("nil Getter")
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	initPeerServerOnce.Do(callInitPeerServer)
 	if _, dup := groups[name]; dup {
 		panic("duplicate registration of group " + name)
 	}
 	g := &Group{
 		name:       name,
 		getter:     getter,
-		peers:      peers,
 		cacheBytes: cacheBytes,
 	}
-	if fn := newGroupHook; fn != nil {
-		fn(g)
+	var gi GroupInterface
+	if stats {
+		gi = &GroupWithStats{
+			Group: g,
+		}
+	} else {
+		gi = g
 	}
-	groups[name] = g
-	return g
+	if fn := newGroupHook; fn != nil {
+		fn(&gi)
+	}
+	groups[name] = &gi
+	return &gi
 }
 
 // newGroupHook, if non-nil, is called right after a new group is created.
-var newGroupHook func(*Group)
+var newGroupHook func(*GroupInterface)
 
 // RegisterNewGroupHook registers a hook that is run each time
 // a group is created.
-func RegisterNewGroupHook(fn func(*Group)) {
+func RegisterNewGroupHook(fn func(*GroupInterface)) {
 	if newGroupHook != nil {
 		panic("RegisterNewGroupHook called more than once")
 	}
 	newGroupHook = fn
 }
 
-// RegisterServerStart registers a hook that is run when the first
-// group is created.
-func RegisterServerStart(fn func()) {
-	if initPeerServer != nil {
-		panic("RegisterServerStart called more than once")
-	}
-	initPeerServer = fn
+type GroupInterface interface {
+	Name() string
+	Get(ctx Context, key string, dest Sink) error
+	load(ctx Context, key string, dest Sink) (value ByteView, destPopulated bool, err error)
+	getLocally(ctx Context, key string, dest Sink) (ByteView, error)
+	lookupCache(key string) (value ByteView, ok bool)
+	populateCache(key string, value ByteView, cache *cache)
 }
 
-func callInitPeerServer() {
-	if initPeerServer != nil {
-		initPeerServer()
-	}
-}
+// Verify that implements Getter and GroupInterface.
+var (
+	_ Getter         = (*Group)(nil)
+	_ Getter         = (*GroupWithStats)(nil)
+	_ GroupInterface = (*Group)(nil)
+	_ GroupInterface = (*GroupWithStats)(nil)
+)
 
 // A Group is a cache namespace and associated data loaded spread over
 // a group of 1 or more machines.
 type Group struct {
 	name       string
 	getter     Getter
-	peersOnce  sync.Once
-	peers      PeerPicker
-	cacheBytes int64 // limit for sum of mainCache and hotCache size
+	cacheBytes int64 // limit for sum of mainCache
 
 	// mainCache is a cache of the keys for which this process
 	// (amongst its peers) is authorative. That is, this cache
@@ -150,20 +155,14 @@ type Group struct {
 	// peer number.
 	mainCache cache
 
-	// hotCache contains keys/values for which this peer is not
-	// authorative (otherwise they would be in mainCache), but
-	// are popular enough to warrant mirroring in this process to
-	// avoid going over the network to fetch from a peer.  Having
-	// a hotCache avoids network hotspotting, where a peer's
-	// network card could become the bottleneck on a popular key.
-	// This cache is used sparingly to maximize the total number
-	// of key/value pairs that can be stored globally.
-	hotCache cache
-
 	// loadGroup ensures that each key is only fetched once
 	// (either locally or remotely), regardless of the number of
 	// concurrent callers.
 	loadGroup singleflight.Group
+}
+
+type GroupWithStats struct {
+	*Group
 
 	// Stats are statistics on the group.
 	Stats Stats
@@ -171,15 +170,12 @@ type Group struct {
 
 // Stats are per-group statistics.
 type Stats struct {
-	Gets           AtomicInt // any Get request, including from peers
-	CacheHits      AtomicInt // either cache was good
-	PeerLoads      AtomicInt // either remote load or remote cache hit (not an error)
-	PeerErrors     AtomicInt
-	Loads          AtomicInt // (gets - cacheHits)
-	LoadsDeduped   AtomicInt // after singleflight
-	LocalLoads     AtomicInt // total good local loads
-	LocalLoadErrs  AtomicInt // total bad local loads
-	ServerRequests AtomicInt // gets that came over the network from peers
+	Gets          AtomicInt // any Get request, including from peers
+	CacheHits     AtomicInt // either cache was good
+	Loads         AtomicInt // (gets - cacheHits)
+	LoadsDeduped  AtomicInt // after singleflight
+	LocalLoads    AtomicInt // total good local loads
+	LocalLoadErrs AtomicInt // total bad local loads
 }
 
 // Name returns the name of the group.
@@ -187,14 +183,88 @@ func (g *Group) Name() string {
 	return g.name
 }
 
-func (g *Group) initPeers() {
-	if g.peers == nil {
-		g.peers = getPeers()
+func (g *Group) Get(ctx Context, key string, dest Sink) error {
+	if dest == nil {
+		return errors.New("groupcache: nil dest Sink")
+	}
+	value, cacheHit := g.lookupCache(key)
+
+	if cacheHit {
+		return setSinkView(dest, value)
+	}
+
+	// Optimization to avoid double unmarshalling or copying: keep
+	// track of whether the dest was already populated. One caller
+	// (if local) will set this; the losers will not. The common
+	// case will likely be one caller.
+	destPopulated := false
+	value, destPopulated, err := g.load(ctx, key, dest)
+	if err != nil {
+		return err
+	}
+	if destPopulated {
+		return nil
+	}
+	return setSinkView(dest, value)
+}
+
+// load loads key either by invoking the getter locally or by sending it to another machine.
+func (g *Group) load(ctx Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
+	viewi, err := g.loadGroup.Do(key, func() (interface{}, error) {
+		var value ByteView
+		var err error
+		value, err = g.getLocally(ctx, key, dest)
+		if err != nil {
+			return nil, err
+		}
+		destPopulated = true // only one caller of load gets this return value
+		g.populateCache(key, value, &g.mainCache)
+		return value, nil
+	})
+	if err == nil {
+		value = viewi.(ByteView)
+	}
+	return
+}
+
+func (g *Group) getLocally(ctx Context, key string, dest Sink) (ByteView, error) {
+	err := g.getter.Get(ctx, key, dest)
+	if err != nil {
+		return ByteView{}, err
+	}
+	return dest.view()
+}
+
+func (g *Group) lookupCache(key string) (value ByteView, ok bool) {
+	if g.cacheBytes <= 0 {
+		return
+	}
+	value, ok = g.mainCache.get(key)
+	return
+}
+
+func (g *Group) populateCache(key string, value ByteView, cache *cache) {
+	if g.cacheBytes <= 0 {
+		return
+	}
+	cache.add(key, value)
+
+	// Evict items from cache(s) if necessary.
+	for {
+		mainBytes := g.mainCache.bytes()
+		if mainBytes <= g.cacheBytes {
+			return
+		}
+
+		// TODO(bradfitz): this is good-enough-for-now logic.
+		// It should be something based on measurements and/or
+		// respecting the costs of different resources.
+		victim := &g.mainCache
+		victim.removeOldest()
 	}
 }
 
-func (g *Group) Get(ctx Context, key string, dest Sink) error {
-	g.peersOnce.Do(g.initPeers)
+func (g *GroupWithStats) Get(ctx Context, key string, dest Sink) error {
 	g.Stats.Gets.Add(1)
 	if dest == nil {
 		return errors.New("groupcache: nil dest Sink")
@@ -222,24 +292,12 @@ func (g *Group) Get(ctx Context, key string, dest Sink) error {
 }
 
 // load loads key either by invoking the getter locally or by sending it to another machine.
-func (g *Group) load(ctx Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
+func (g *GroupWithStats) load(ctx Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
 	g.Stats.Loads.Add(1)
 	viewi, err := g.loadGroup.Do(key, func() (interface{}, error) {
 		g.Stats.LoadsDeduped.Add(1)
 		var value ByteView
 		var err error
-		if peer, ok := g.peers.PickPeer(key); ok {
-			value, err = g.getFromPeer(ctx, peer, key)
-			if err == nil {
-				g.Stats.PeerLoads.Add(1)
-				return value, nil
-			}
-			g.Stats.PeerErrors.Add(1)
-			// TODO(bradfitz): log the peer's error? keep
-			// log of the past few for /groupcachez?  It's
-			// probably boring (normal task movement), so not
-			// worth logging I imagine.
-		}
 		value, err = g.getLocally(ctx, key, dest)
 		if err != nil {
 			g.Stats.LocalLoadErrs.Add(1)
@@ -256,71 +314,6 @@ func (g *Group) load(ctx Context, key string, dest Sink) (value ByteView, destPo
 	return
 }
 
-func (g *Group) getLocally(ctx Context, key string, dest Sink) (ByteView, error) {
-	err := g.getter.Get(ctx, key, dest)
-	if err != nil {
-		return ByteView{}, err
-	}
-	return dest.view()
-}
-
-func (g *Group) getFromPeer(ctx Context, peer ProtoGetter, key string) (ByteView, error) {
-	req := &pb.GetRequest{
-		Group: &g.name,
-		Key:   &key,
-	}
-	res := &pb.GetResponse{}
-	err := peer.Get(ctx, req, res)
-	if err != nil {
-		return ByteView{}, err
-	}
-	value := ByteView{b: res.Value}
-	// TODO(bradfitz): use res.MinuteQps or something smart to
-	// conditionally populate hotCache.  For now just do it some
-	// percentage of the time.
-	if rand.Intn(10) == 0 {
-		g.populateCache(key, value, &g.hotCache)
-	}
-	return value, nil
-}
-
-func (g *Group) lookupCache(key string) (value ByteView, ok bool) {
-	if g.cacheBytes <= 0 {
-		return
-	}
-	value, ok = g.mainCache.get(key)
-	if ok {
-		return
-	}
-	value, ok = g.hotCache.get(key)
-	return
-}
-
-func (g *Group) populateCache(key string, value ByteView, cache *cache) {
-	if g.cacheBytes <= 0 {
-		return
-	}
-	cache.add(key, value)
-
-	// Evict items from cache(s) if necessary.
-	for {
-		mainBytes := g.mainCache.bytes()
-		hotBytes := g.hotCache.bytes()
-		if mainBytes+hotBytes <= g.cacheBytes {
-			return
-		}
-
-		// TODO(bradfitz): this is good-enough-for-now logic.
-		// It should be something based on measurements and/or
-		// respecting the costs of different resources.
-		victim := &g.mainCache
-		if hotBytes > mainBytes/8 {
-			victim = &g.hotCache
-		}
-		victim.removeOldest()
-	}
-}
-
 // CacheType represents a type of cache.
 type CacheType int
 
@@ -328,20 +321,13 @@ const (
 	// The MainCache is the cache for items that this peer is the
 	// owner for.
 	MainCache CacheType = iota + 1
-
-	// The HotCache is the cache for items that seem popular
-	// enough to replicate to this node, even though it's not the
-	// owner.
-	HotCache
 )
 
 // CacheStats returns stats about the provided cache within the group.
-func (g *Group) CacheStats(which CacheType) CacheStats {
+func (g *GroupWithStats) CacheStats(which CacheType) CacheStats {
 	switch which {
 	case MainCache:
 		return g.mainCache.stats()
-	case HotCache:
-		return g.hotCache.stats()
 	default:
 		return CacheStats{}
 	}

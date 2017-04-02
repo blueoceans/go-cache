@@ -1,0 +1,24 @@
+{
+    "memo": "",
+    "projects": [
+        {
+            "name": "github.com/golang/groupcache",
+            "branch": "master",
+            "revision": "a6b377e3400b08991b80d6805d627f347f983866",
+            "packages": [
+                "groupcachepb",
+                "lru",
+                "singleflight",
+                "testpb"
+            ]
+        },
+        {
+            "name": "github.com/golang/protobuf",
+            "branch": "master",
+            "revision": "1f49d83d9aa00e6ce4fc8258c71cc7786aec968a",
+            "packages": [
+                "proto"
+            ]
+        }
+    ]
+}

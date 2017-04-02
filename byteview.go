@@ -1,5 +1,9 @@
 /*
+Copyright 2015 ENDOH takanao.
+<https://github.com/MiCHiLU/go-lru-cache-stats>
+
 Copyright 2012 Google Inc.
+<https://github.com/golang/groupcache>
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,7 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package groupcache
+package lru
 
 import (
 	"bytes"

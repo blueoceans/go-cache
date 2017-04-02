@@ -1,5 +1,9 @@
 /*
+Copyright 2015 ENDOH takanao.
+<https://github.com/MiCHiLU/go-lru-cache-stats>
+
 Copyright 2012 Google Inc.
+<https://github.com/golang/groupcache>
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,7 +20,7 @@ limitations under the License.
 
 // peers.go defines how processes find and communicate with their peers.
 
-package groupcache
+package lru
 
 import (
 	pb "github.com/golang/groupcache/groupcachepb"
@@ -30,42 +34,4 @@ type Context interface{}
 // ProtoGetter is the interface that must be implemented by a peer.
 type ProtoGetter interface {
 	Get(context Context, in *pb.GetRequest, out *pb.GetResponse) error
-}
-
-// PeerPicker is the interface that must be implemented to locate
-// the peer that owns a specific key.
-type PeerPicker interface {
-	// PickPeer returns the peer that owns the specific key
-	// and true to indicate that a remote peer was nominated.
-	// It returns nil, false if the key owner is the current peer.
-	PickPeer(key string) (peer ProtoGetter, ok bool)
-}
-
-// NoPeers is an implementation of PeerPicker that never finds a peer.
-type NoPeers struct{}
-
-func (NoPeers) PickPeer(key string) (peer ProtoGetter, ok bool) { return }
-
-var (
-	portPicker func() PeerPicker
-)
-
-// RegisterPeerPicker registers the peer initialization function.
-// It is called once, when the first group is created.
-func RegisterPeerPicker(fn func() PeerPicker) {
-	if portPicker != nil {
-		panic("RegisterPeerPicker called more than once")
-	}
-	portPicker = fn
-}
-
-func getPeers() PeerPicker {
-	if portPicker == nil {
-		return NoPeers{}
-	}
-	pk := portPicker()
-	if pk == nil {
-		pk = NoPeers{}
-	}
-	return pk
 }

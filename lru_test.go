@@ -1,5 +1,9 @@
 /*
+Copyright 2015 ENDOH takanao.
+<https://github.com/MiCHiLU/go-lru-cache-stats>
+
 Copyright 2012 Google Inc.
+<https://github.com/golang/groupcache>
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,7 +20,7 @@ limitations under the License.
 
 // Tests for groupcache.
 
-package groupcache
+package lru
 
 import (
 	"errors"
@@ -54,18 +58,19 @@ const (
 	testMessageType = "google3/net/groupcache/go/test_proto.TestMessage"
 	fromChan        = "from-chan"
 	cacheSize       = 1 << 20
+	stats           = true
 )
 
 func testSetup() {
-	stringGroup = NewGroup(stringGroupName, cacheSize, GetterFunc(func(_ Context, key string, dest Sink) error {
+	stringGroup = (*NewGroup(stringGroupName, cacheSize, GetterFunc(func(_ Context, key string, dest Sink) error {
 		if key == fromChan {
 			key = <-stringc
 		}
 		cacheFills.Add(1)
 		return dest.SetString("ECHO:" + key)
-	}))
+	}), stats))
 
-	protoGroup = NewGroup(protoGroupName, cacheSize, GetterFunc(func(_ Context, key string, dest Sink) error {
+	protoGroup = (*NewGroup(protoGroupName, cacheSize, GetterFunc(func(_ Context, key string, dest Sink) error {
 		if key == fromChan {
 			key = <-stringc
 		}
@@ -74,7 +79,7 @@ func testSetup() {
 			Name: proto.String("ECHO:" + key),
 			City: proto.String("SOME-CITY"),
 		})
-	}))
+	}), stats))
 }
 
 // tests that a Getter's Get method is only called once with two
@@ -200,7 +205,7 @@ func TestCacheEviction(t *testing.T) {
 		t.Fatalf("expected 1 cache fill; got %d", fills)
 	}
 
-	g := stringGroup.(*Group)
+	g := stringGroup.(*GroupWithStats)
 	evict0 := g.mainCache.nevict
 
 	// Trash the cache with other keys.
@@ -262,7 +267,7 @@ func TestPeers(t *testing.T) {
 		localHits++
 		return dest.SetString("got:" + key)
 	}
-	testGroup := newGroup("TestPeers-group", cacheSize, GetterFunc(getter), peerList)
+	var testGroup GroupInterface
 	run := func(name string, n int, wantSummary string) {
 		// Reset counters
 		localHits = 0
@@ -291,19 +296,16 @@ func TestPeers(t *testing.T) {
 		}
 	}
 	resetCacheSize := func(maxBytes int64) {
-		g := testGroup
-		g.cacheBytes = maxBytes
-		g.mainCache = cache{}
-		g.hotCache = cache{}
+		testGroup = (*newGroup(fmt.Sprintf("TestPeers-group-%s", maxBytes), maxBytes, GetterFunc(getter), stats))
 	}
 
 	// Base case; peers all up, with no problems.
 	resetCacheSize(1 << 20)
-	run("base", 200, "localHits = 49, peers = 51 49 51")
+	run("base", 200, "localHits = 200, peers = 0 0 0")
 
 	// Verify cache was hit.  All localHits are gone, and some of
 	// the peer hits (the ones randomly selected to be maybe hot)
-	run("cached_base", 200, "localHits = 0, peers = 49 47 48")
+	run("cached_base", 200, "localHits = 0, peers = 0 0 0")
 	resetCacheSize(0)
 
 	// With one of the peers being down.
@@ -312,12 +314,12 @@ func TestPeers(t *testing.T) {
 	// spread the load out. Currently it fails back to local
 	// execution if the first consistent-hash slot is unavailable.
 	peerList[0] = nil
-	run("one_peer_down", 200, "localHits = 100, peers = 0 49 51")
+	run("one_peer_down", 200, "localHits = 200, peers = 0 0 0")
 
 	// Failing peer
 	peerList[0] = peer0
 	peer0.fail = true
-	run("peer0_failing", 200, "localHits = 100, peers = 51 49 51")
+	run("peer0_failing", 200, "localHits = 200, peers = 0 0 0")
 }
 
 func TestTruncatingByteSliceTarget(t *testing.T) {
