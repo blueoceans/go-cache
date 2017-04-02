@@ -3,9 +3,10 @@ build:
   steps:
   - setup-go-workspace
   - script:
-      name: go get
+      name: dep
       code: |
-        go get -t ./...
+        go get -u github.com/golang/dep/...
+        dep ensure
   - script:
       name: go build
       code: |
