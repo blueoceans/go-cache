@@ -97,6 +97,7 @@ func newGroup(name string, cacheBytes int64, getter Getter, stats bool) *GroupIn
 		name:       name,
 		getter:     getter,
 		cacheBytes: cacheBytes,
+		loadGroup:  &singleflight.Group{},
 	}
 	var gi GroupInterface
 	if stats {
@@ -150,7 +151,7 @@ type Group struct {
 	cacheBytes int64 // limit for sum of mainCache
 
 	// mainCache is a cache of the keys for which this process
-	// (amongst its peers) is authorative. That is, this cache
+	// (amongst its peers) is authoritative. That is, this cache
 	// contains keys which consistent hash on to this process's
 	// peer number.
 	mainCache cache
@@ -159,6 +160,8 @@ type Group struct {
 	// (either locally or remotely), regardless of the number of
 	// concurrent callers.
 	loadGroup singleflight.Group
+
+	_ int32 // force Stats to be 8-byte aligned on 32-bit platforms
 }
 
 type GroupWithStats struct {
@@ -166,6 +169,14 @@ type GroupWithStats struct {
 
 	// Stats are statistics on the group.
 	Stats Stats
+}
+
+// flightGroup is defined as an interface which flightgroup.Group
+// satisfies.  We define this so that we may test with an alternate
+// implementation.
+type flightGroup interface {
+	// Done is called when Do is done.
+	Do(key string, fn func() (interface{}, error)) (interface{}, error)
 }
 
 // Stats are per-group statistics.
@@ -181,6 +192,12 @@ type Stats struct {
 // Name returns the name of the group.
 func (g *Group) Name() string {
 	return g.name
+}
+
+func (g *Group) initPeers() {
+	if g.peers == nil {
+		g.peers = getPeers(g.name)
+	}
 }
 
 func (g *Group) Get(ctx Context, key string, dest Sink) error {
@@ -211,6 +228,32 @@ func (g *Group) Get(ctx Context, key string, dest Sink) error {
 // load loads key either by invoking the getter locally or by sending it to another machine.
 func (g *Group) load(ctx Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
 	viewi, err := g.loadGroup.Do(key, func() (interface{}, error) {
+		// Check the cache again because singleflight can only dedup calls
+		// that overlap concurrently.  It's possible for 2 concurrent
+		// requests to miss the cache, resulting in 2 load() calls.  An
+		// unfortunate goroutine scheduling would result in this callback
+		// being run twice, serially.  If we don't check the cache again,
+		// cache.nbytes would be incremented below even though there will
+		// be only one entry for this key.
+		//
+		// Consider the following serialized event ordering for two
+		// goroutines in which this callback gets called twice for hte
+		// same key:
+		// 1: Get("key")
+		// 2: Get("key")
+		// 1: lookupCache("key")
+		// 2: lookupCache("key")
+		// 1: load("key")
+		// 2: load("key")
+		// 1: loadGroup.Do("key", fn)
+		// 1: fn()
+		// 2: loadGroup.Do("key", fn)
+		// 2: fn()
+		if value, cacheHit := g.lookupCache(key); cacheHit {
+			g.Stats.CacheHits.Add(1)
+			return value, nil
+		}
+		g.Stats.LoadsDeduped.Add(1)
 		var value ByteView
 		var err error
 		value, err = g.getLocally(ctx, key, dest)
