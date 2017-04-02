@@ -194,12 +194,6 @@ func (g *Group) Name() string {
 	return g.name
 }
 
-func (g *Group) initPeers() {
-	if g.peers == nil {
-		g.peers = getPeers(g.name)
-	}
-}
-
 func (g *Group) Get(ctx Context, key string, dest Sink) error {
 	if dest == nil {
 		return errors.New("groupcache: nil dest Sink")
