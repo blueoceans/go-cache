@@ -1,6 +1,6 @@
 /*
-Copyright 2015 ENDOH takanao.
-<https://github.com/MiCHiLU/go-lru-cache-stats>
+Copyright 2017 ENDOH takanao.
+<https://github.com/blueoceans/go-cache>
 
 Copyright 2012 Google Inc.
 <https://github.com/golang/groupcache>
@@ -20,7 +20,7 @@ limitations under the License.
 
 // peers.go defines how processes find and communicate with their peers.
 
-package lru
+package cache
 
 import (
 	pb "github.com/golang/groupcache/groupcachepb"

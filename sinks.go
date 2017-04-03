@@ -1,6 +1,6 @@
 /*
-Copyright 2015 ENDOH takanao.
-<https://github.com/MiCHiLU/go-lru-cache-stats>
+Copyright 2017 ENDOH takanao.
+<https://github.com/blueoceans/go-cache>
 
 Copyright 2012 Google Inc.
 <https://github.com/golang/groupcache>
@@ -18,7 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package lru
+package cache
 
 import (
 	"errors"
