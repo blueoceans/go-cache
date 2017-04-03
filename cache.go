@@ -363,8 +363,8 @@ func (g *GroupWithStats) load(ctx Context, key string, dest Sink) (value ByteVie
 
 const ()
 
-// CacheStats returns stats about the provided cache within the group.
-func (g *GroupWithStats) CacheStats() CacheStats {
+// GroupStats returns stats about the provided cache within the group.
+func (g *GroupWithStats) GroupStats() GroupStats {
 	return g.mainCache.stats()
 }
 
@@ -379,10 +379,10 @@ type cache struct {
 	nevict     int64 // number of evictions
 }
 
-func (c *cache) stats() CacheStats {
+func (c *cache) stats() GroupStats {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return CacheStats{
+	return GroupStats{
 		Bytes:     c.nbytes,
 		Items:     c.itemsLocked(),
 		Gets:      c.nget,
@@ -474,8 +474,8 @@ func (i *AtomicInt) String() string {
 	return strconv.FormatInt(i.Get(), 10)
 }
 
-// CacheStats are returned by stats accessors on Group.
-type CacheStats struct {
+// GroupStats are returned by stats accessors on Group.
+type GroupStats struct {
 	Bytes     int64
 	Items     int64
 	Gets      int64
