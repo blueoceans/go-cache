@@ -20,7 +20,7 @@ limitations under the License.
 
 // Tests for groupcache.
 
-package lru
+package cache
 
 import (
 	"errors"

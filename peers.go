@@ -20,7 +20,7 @@ limitations under the License.
 
 // peers.go defines how processes find and communicate with their peers.
 
-package lru
+package cache
 
 import (
 	pb "github.com/golang/groupcache/groupcachepb"
