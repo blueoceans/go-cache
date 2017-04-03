@@ -18,7 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package groupcache provides a data loading mechanism with caching
+// Package lru provides a data loading mechanism with caching
 // and de-duplication that works across a set of peer processes.
 //
 // Each data Get first consults its local cache, otherwise delegates
@@ -52,6 +52,7 @@ type Getter interface {
 // A GetterFunc implements Getter with a function.
 type GetterFunc func(ctx Context, key string, dest Sink) error
 
+// Get item from cache.
 func (f GetterFunc) Get(ctx Context, key string, dest Sink) error {
 	return f(ctx, key, dest)
 }
@@ -126,6 +127,7 @@ func RegisterNewGroupHook(fn func(*GroupInterface)) {
 	newGroupHook = fn
 }
 
+// GroupInterface implements Group.
 type GroupInterface interface {
 	Name() string
 	Get(ctx Context, key string, dest Sink) error
@@ -162,6 +164,8 @@ type Group struct {
 	loadGroup flightGroup
 }
 
+// A GroupWithStats is a cache namespace and associated data loaded spread over
+// a group of 1 or more machines.
 type GroupWithStats struct {
 	*Group
 
@@ -194,6 +198,7 @@ func (g *Group) Name() string {
 	return g.name
 }
 
+// Get item from cache.
 func (g *Group) Get(ctx Context, key string, dest Sink) error {
 	if dest == nil {
 		return errors.New("groupcache: nil dest Sink")
@@ -275,6 +280,7 @@ func (g *Group) populateCache(key string, value ByteView, cache *cache) {
 	}
 }
 
+// Get item from cache.
 func (g *GroupWithStats) Get(ctx Context, key string, dest Sink) error {
 	g.Stats.Gets.Add(1)
 	if dest == nil {
@@ -354,7 +360,7 @@ func (g *GroupWithStats) load(ctx Context, key string, dest Sink) (value ByteVie
 type CacheType int
 
 const (
-	// The MainCache is the cache for items that this peer is the
+	// MainCache is the cache for items that this peer is the
 	// owner for.
 	MainCache CacheType = iota + 1
 )
