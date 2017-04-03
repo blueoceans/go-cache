@@ -280,6 +280,11 @@ func (g *Group) populateCache(key string, value ByteView, cache *cache) {
 	}
 }
 
+// Remove item from cache.
+func (g *Group) Remove(key string) {
+	g.mainCache.remove(key)
+}
+
 // Get item from cache.
 func (g *GroupWithStats) Get(ctx Context, key string, dest Sink) error {
 	g.Stats.Gets.Add(1)
@@ -434,6 +439,14 @@ func (c *cache) removeOldest() {
 	defer c.mu.Unlock()
 	if c.lru != nil {
 		c.lru.RemoveOldest()
+	}
+}
+
+func (c *cache) remove(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lru != nil {
+		c.lru.Remove(key)
 	}
 }
 
