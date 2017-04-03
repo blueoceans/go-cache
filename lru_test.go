@@ -389,9 +389,9 @@ func (g *orderedFlightGroup) Do(key string, fn func() (interface{}, error)) (int
 func TestNoDedup(t *testing.T) {
 	const testkey = "testkey"
 	const testval = "testval"
-	g := newGroup("testgroup", 1024, GetterFunc(func(_ Context, key string, dest Sink) error {
+	g := (*newGroup("testgroup", 1024, GetterFunc(func(_ Context, key string, dest Sink) error {
 		return dest.SetString(testval)
-	}), nil)
+	}), stats)).(*GroupWithStats)
 
 	orderedGroup := &orderedFlightGroup{
 		stage1: make(chan bool),
@@ -447,7 +447,7 @@ func TestNoDedup(t *testing.T) {
 }
 
 func TestGroupStatsAlignment(t *testing.T) {
-	var g Group
+	var g GroupWithStats
 	off := unsafe.Offsetof(g.Stats)
 	if off%8 != 0 {
 		t.Fatal("Stats structure is not 8-byte aligned.")
