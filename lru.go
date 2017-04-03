@@ -18,7 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package groupcache provides a data loading mechanism with caching
+// Package lru provides a data loading mechanism with caching
 // and de-duplication that works across a set of peer processes.
 //
 // Each data Get first consults its local cache, otherwise delegates
@@ -52,6 +52,7 @@ type Getter interface {
 // A GetterFunc implements Getter with a function.
 type GetterFunc func(ctx Context, key string, dest Sink) error
 
+// Get item from cache.
 func (f GetterFunc) Get(ctx Context, key string, dest Sink) error {
 	return f(ctx, key, dest)
 }
@@ -97,6 +98,7 @@ func newGroup(name string, cacheBytes int64, getter Getter, stats bool) *GroupIn
 		name:       name,
 		getter:     getter,
 		cacheBytes: cacheBytes,
+		loadGroup:  &singleflight.Group{},
 	}
 	var gi GroupInterface
 	if stats {
@@ -125,6 +127,7 @@ func RegisterNewGroupHook(fn func(*GroupInterface)) {
 	newGroupHook = fn
 }
 
+// GroupInterface implements Group.
 type GroupInterface interface {
 	Name() string
 	Get(ctx Context, key string, dest Sink) error
@@ -150,7 +153,7 @@ type Group struct {
 	cacheBytes int64 // limit for sum of mainCache
 
 	// mainCache is a cache of the keys for which this process
-	// (amongst its peers) is authorative. That is, this cache
+	// (amongst its peers) is authoritative. That is, this cache
 	// contains keys which consistent hash on to this process's
 	// peer number.
 	mainCache cache
@@ -158,14 +161,26 @@ type Group struct {
 	// loadGroup ensures that each key is only fetched once
 	// (either locally or remotely), regardless of the number of
 	// concurrent callers.
-	loadGroup singleflight.Group
+	loadGroup flightGroup
 }
 
+// A GroupWithStats is a cache namespace and associated data loaded spread over
+// a group of 1 or more machines.
 type GroupWithStats struct {
 	*Group
 
+	_ int32 // force Stats to be 8-byte aligned on 32-bit platforms
+
 	// Stats are statistics on the group.
 	Stats Stats
+}
+
+// flightGroup is defined as an interface which flightgroup.Group
+// satisfies.  We define this so that we may test with an alternate
+// implementation.
+type flightGroup interface {
+	// Done is called when Do is done.
+	Do(key string, fn func() (interface{}, error)) (interface{}, error)
 }
 
 // Stats are per-group statistics.
@@ -183,6 +198,7 @@ func (g *Group) Name() string {
 	return g.name
 }
 
+// Get item from cache.
 func (g *Group) Get(ctx Context, key string, dest Sink) error {
 	if dest == nil {
 		return errors.New("groupcache: nil dest Sink")
@@ -264,6 +280,7 @@ func (g *Group) populateCache(key string, value ByteView, cache *cache) {
 	}
 }
 
+// Get item from cache.
 func (g *GroupWithStats) Get(ctx Context, key string, dest Sink) error {
 	g.Stats.Gets.Add(1)
 	if dest == nil {
@@ -295,6 +312,31 @@ func (g *GroupWithStats) Get(ctx Context, key string, dest Sink) error {
 func (g *GroupWithStats) load(ctx Context, key string, dest Sink) (value ByteView, destPopulated bool, err error) {
 	g.Stats.Loads.Add(1)
 	viewi, err := g.loadGroup.Do(key, func() (interface{}, error) {
+		// Check the cache again because singleflight can only dedup calls
+		// that overlap concurrently.  It's possible for 2 concurrent
+		// requests to miss the cache, resulting in 2 load() calls.  An
+		// unfortunate goroutine scheduling would result in this callback
+		// being run twice, serially.  If we don't check the cache again,
+		// cache.nbytes would be incremented below even though there will
+		// be only one entry for this key.
+		//
+		// Consider the following serialized event ordering for two
+		// goroutines in which this callback gets called twice for hte
+		// same key:
+		// 1: Get("key")
+		// 2: Get("key")
+		// 1: lookupCache("key")
+		// 2: lookupCache("key")
+		// 1: load("key")
+		// 2: load("key")
+		// 1: loadGroup.Do("key", fn)
+		// 1: fn()
+		// 2: loadGroup.Do("key", fn)
+		// 2: fn()
+		if value, cacheHit := g.lookupCache(key); cacheHit {
+			g.Stats.CacheHits.Add(1)
+			return value, nil
+		}
 		g.Stats.LoadsDeduped.Add(1)
 		var value ByteView
 		var err error
@@ -318,7 +360,7 @@ func (g *GroupWithStats) load(ctx Context, key string, dest Sink) (value ByteVie
 type CacheType int
 
 const (
-	// The MainCache is the cache for items that this peer is the
+	// MainCache is the cache for items that this peer is the
 	// owner for.
 	MainCache CacheType = iota + 1
 )
