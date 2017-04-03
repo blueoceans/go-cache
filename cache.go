@@ -361,23 +361,11 @@ func (g *GroupWithStats) load(ctx Context, key string, dest Sink) (value ByteVie
 	return
 }
 
-// CacheType represents a type of cache.
-type CacheType int
-
-const (
-	// MainCache is the cache for items that this peer is the
-	// owner for.
-	MainCache CacheType = iota + 1
-)
+const ()
 
 // CacheStats returns stats about the provided cache within the group.
-func (g *GroupWithStats) CacheStats(which CacheType) CacheStats {
-	switch which {
-	case MainCache:
-		return g.mainCache.stats()
-	default:
-		return CacheStats{}
-	}
+func (g *GroupWithStats) CacheStats() CacheStats {
+	return g.mainCache.stats()
 }
 
 // cache is a wrapper around an *lru.Cache that adds synchronization,
